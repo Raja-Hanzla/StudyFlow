@@ -1,0 +1,48 @@
+/* Design tokens. Change colors here and the whole app follows. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #e3e6eb;
+  --text: #1a1f2b;
+  --text-muted: #5f6b7a;
+  --accent: #3b5bdb;
+  --accent-contrast: #ffffff;
+  --success: #2f9e44;
+  --warning: #e8890c;
+  --danger: #d6336c;
+
+  /* Text versions of the status colors. The plain ones above are for borders, bars and
+     backgrounds; these pass the 4.5:1 contrast minimum for text on every surface. */
+  --success-text: #1c6f2f;
+  --warning-text: #9a4d00;
+  --danger-text: #b8234f;
+
+  color-scheme: light; /* native controls (date picker, scrollbars) follow the theme */
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --sidebar-w: 232px;
+}
+
+[data-theme="dark"] {
+  --bg: #0f1218;
+  --surface: #171b24;
+  --surface-2: #1f2430;
+  --border: #2a3040;
+  --text: #e8ebf1;
+  --text-muted: #9aa5b5;
+  --accent: #748ffc;
+  --accent-contrast: #0f1218;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --success-text: #69db7c;
+  --warning-text: #f4b24f;
+  --danger-text: #ff7fa8;
+  color-scheme: dark;
+}

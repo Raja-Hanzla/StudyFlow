@@ -1,0 +1,85 @@
+/* =====================================================================
+   Responsive layout. The base styles (style.css) are the desktop design.
+   Desktop  : sidebar with labels + content
+   Tablet   : icon-only sidebar            (up to 1024px)
+   Mobile   : bottom navigation bar        (up to 640px)
+   ===================================================================== */
+
+/* ---------- Tablet ---------- */
+@media (max-width: 1024px) {
+  :root { --sidebar-w: 68px; }
+  /* Labels stay available to screen readers (display:none would remove them). */
+  .brand span, .nav a span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .nav a { justify-content: center; }
+  .brand { justify-content: center; padding-inline: 0; }
+  .view { padding: var(--space-4) var(--space-5); }
+  .summary-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+}
+
+/* Start / Done / Partial / Missed: one row on very wide screens, an even row of four below that */
+@media (max-width: 1280px) {
+  .task-actions { display: flex; gap: var(--space-2); flex: 1 1 100%; }
+  .task-actions .btn { flex: 1 1 0; min-width: 0; padding-inline: 4px; text-align: center; }
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 640px) {
+  .shell { flex-direction: column; }
+
+  /* Navigation moves to the bottom, where a thumb reaches it */
+  .sidebar {
+    position: fixed; bottom: 0; left: 0; right: 0; top: auto;
+    width: 100%; height: auto; z-index: 40;
+    border-right: 0; border-top: 1px solid var(--border);
+    padding: var(--space-1) var(--space-2) calc(var(--space-1) + env(safe-area-inset-bottom));
+  }
+  .brand { display: none; }
+  .nav { flex-direction: row; justify-content: space-around; gap: 0; }
+  .nav a {
+    flex: 1 1 0; min-width: 0; min-height: 48px; justify-content: center;
+    flex-direction: column; gap: 2px; padding: 6px 2px; font-size: 0.68rem; text-align: center;
+  }
+  .nav a span {                      /* labels are visible again on the bottom bar */
+    position: static; width: auto; height: auto; overflow: hidden; clip: auto;
+    max-width: 100%; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .topbar { position: sticky; top: 0; z-index: 30; padding: var(--space-3) var(--space-4); }
+  h1 { font-size: 1.15rem; }
+  .view { padding: var(--space-4); padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+
+  /* 16px inputs: iPhones zoom into smaller ones when focused */
+  input, select, textarea { font-size: 16px; }
+
+  .section-head { flex-wrap: wrap; }
+  .head-actions .btn, .toolbar .btn { flex: 1 1 auto; }
+  .topic-row { gap: var(--space-2); }
+  .topic-recall { flex: 1 1 100%; }
+  .summary-grid { grid-template-columns: 1fr; }
+  .summary-grid.compact { grid-template-columns: 1fr 1fr; gap: var(--space-3); }  /* short number cards: two across */
+  .summary-grid.compact .card { padding: var(--space-4); }
+  .row .grow { min-width: 100%; }
+  .auth-card, .auth-card.wide { padding: var(--space-5) var(--space-4); }
+  .auth-wrap { place-items: start center; padding: var(--space-3); }
+  .nav-row { position: sticky; bottom: 0; background: var(--surface); padding: var(--space-3) 0 0; }
+  dialog { padding: var(--space-4); }
+  .dialog-actions .btn { flex: 1 1 0; }
+  .toast { bottom: calc(76px + env(safe-area-inset-bottom)); max-width: calc(100% - 32px); }
+  .account-menu { right: -8px; }
+}
+
+/* ---------- Touch screens: bigger targets (44px is the recommended minimum) ---------- */
+@media (pointer: coarse) {
+  .btn, .icon-btn, select, input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) { min-height: 44px; }
+  .icon-btn { min-width: 44px; }
+  .btn { padding-inline: 16px; }
+  .radio-row label { min-height: 44px; }
+}
+
+/* ---------- Respect "reduce motion" ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

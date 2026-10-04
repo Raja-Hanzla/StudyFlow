@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#3b5bdb" />
+  <title>StudyFlow</title>
+  <!-- Small inline icon, so the browser doesn't ask for /favicon.ico -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b5bdb'/%3E%3Cpath d='M9 17l5 5 9-12' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/responsive.css" />
+  <!-- Lucide icons (pinned version) -->
+  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
+  <!-- Chart.js for the Progress page (pinned version) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- First thing a keyboard user reaches: jumps past the menu to the page content -->
+  <button type="button" id="skip-link" class="skip-link">Skip to main content</button>
+
+  <!-- Shown when the browser is offline -->
+  <div id="offline-banner" class="offline-banner" role="status" hidden>
+    You're offline. Changes can't be saved until you reconnect.
+  </div>
+
+  <noscript><p class="notice">StudyFlow needs JavaScript. Please enable it and reload the page.</p></noscript>
+
+  <!-- Visible until the app has started. If it never does (e.g. no internet), it says so. -->
+  <p id="boot" class="boot" role="status">Loading StudyFlow...</p>
+
+  <!-- Login, sign up, password reset and the setup wizard render in here -->
+  <div id="auth-root" hidden></div>
+
+  <!-- The main application shell: sidebar + content -->
+  <div id="app-shell" class="shell" hidden>
+
+    <div class="sidebar">
+      <div class="brand"><i data-lucide="book-open-check" aria-hidden="true"></i><span>StudyFlow</span></div>
+      <nav id="main-nav" class="nav" aria-label="Main">
+        <a href="#/dashboard" data-route="dashboard" title="Dashboard"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>Dashboard</span></a>
+        <a href="#/subjects"  data-route="subjects"  title="Subjects"><i data-lucide="library" aria-hidden="true"></i><span>Subjects</span></a>
+        <a href="#/calendar"  data-route="calendar"  title="Calendar"><i data-lucide="calendar-days" aria-hidden="true"></i><span>Calendar</span></a>
+        <a href="#/progress"  data-route="progress"  title="Progress"><i data-lucide="chart-column" aria-hidden="true"></i><span>Progress</span></a>
+        <a href="#/insights"  data-route="insights"  title="Insights"><i data-lucide="lightbulb" aria-hidden="true"></i><span>Insights</span></a>
+        <a href="#/settings"  data-route="settings"  title="Settings"><i data-lucide="settings" aria-hidden="true"></i><span>Settings</span></a>
+      </nav>
+    </div>
+
+    <div class="main">
+      <header class="topbar">
+        <h1 id="page-title" tabindex="-1">Dashboard</h1>
+        <div class="topbar-right">
+          <!-- Subtle save feedback: "Saving...", "Saved", "Unable to save" -->
+          <span id="save-status" class="save-status" role="status" aria-live="polite"></span>
+          <button id="theme-toggle" class="icon-btn" aria-label="Dark mode" aria-pressed="false">
+            <i data-lucide="moon" aria-hidden="true"></i>
+          </button>
+          <!-- Account menu: name, email, logout -->
+          <div class="account">
+            <button id="account-btn" class="icon-btn" aria-label="Account menu"
+                    aria-haspopup="true" aria-expanded="false" aria-controls="account-menu">
+              <i data-lucide="user-round" aria-hidden="true"></i>
+            </button>
+            <div id="account-menu" class="account-menu" hidden>
+              <p id="account-name" class="account-name"></p>
+              <p id="account-email" class="muted"></p>
+              <button id="logout-btn" class="btn btn-block">Log out</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main id="view" class="view" tabindex="-1" aria-label="Page content">
+        <!-- Each page renders into this element -->
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+  <script>
+    // If the app can't start, replace "Loading" with what actually went wrong.
+    (function () {
+      var boot = document.getElementById("boot");
+      function say(text) { if (boot && boot.isConnected) boot.textContent = text; }
+      window.addEventListener("error", function (e) {
+        if (boot && boot.isConnected && e.message) say("StudyFlow couldn't start: " + e.message + " (press F12, then Console, for details)");
+      });
+      document.querySelector('script[type="module"]').addEventListener("error", function () {
+        say("StudyFlow couldn't start: a script file didn't load. Open it with a local server (not by double-clicking index.html) and check F12 > Console.");
+      });
+      setTimeout(function () {
+        say(navigator.onLine === false
+          ? "You're offline. StudyFlow will start once you reconnect."
+          : "StudyFlow is taking longer than usual to start. If this stays, press F12 and look at the Console for the reason.");
+      }, 15000);
+    })();
+  </script>
+</body>
+</html>
