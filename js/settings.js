@@ -35,6 +35,7 @@ export async function renderSettings(container) {
 
 function draw(el, container, profile, settings) {
   const daily = settings.daily_study_minutes ?? profile.daily_study_minutes ?? 60;
+  const recall = settings.daily_recall_minutes ?? 30;
   const theme = currentTheme();
   const input = (id, label, attrs, value, setting, extra = "") => `
     <div class="field"><label for="${id}">${label}</label>
@@ -65,6 +66,11 @@ function draw(el, container, profile, settings) {
                    data-last="${settings[`${d}_minutes`] ?? ""}" value="${settings[`${d}_minutes`] ?? ""}" placeholder="${daily}" /></div>`).join("")}
       </div>
       <button type="button" class="btn" data-action="all-days">Use the usual amount for every day</button>
+    </section>
+
+    <section class="card"><h2>Recall time</h2>
+      <p class="muted">Time for recalls (quick reviews of topics you already studied). It is separate from study time above, so recalls never use up your study minutes.</p>
+      ${input("set-recall", "Recall minutes per day", 'type="number" min="5" max="240" step="5"', recall, "recall")}
     </section>
 
     <section class="card"><h2>Appearance</h2>
@@ -129,6 +135,10 @@ function draw(el, container, profile, settings) {
         el.querySelectorAll('[data-setting="weekday"]').forEach((i) => (i.placeholder = String(n)));
         afterCapacity();
       });
+    } else if (setting === "recall") {
+      const n = Number(field.value);
+      if (!Number.isInteger(n) || n < 5 || n > 240) { showToast("Recall time must be between 5 and 240 minutes."); return revert(); }
+      withSaving(() => db.updateSettings({ daily_recall_minutes: n }), () => { remember(); afterCapacity(); });
     } else if (setting === "weekday") {
       const raw = field.value.trim();
       const n = raw === "" ? null : Number(raw);

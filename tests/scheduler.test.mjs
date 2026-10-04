@@ -61,3 +61,22 @@ assert.deepEqual([d.insert.length, d.update.length, d.remove.length], [0, 0, 0])
 assert.equal(rescheduleMissedTasks([{ id: "o", status: "pending", date: addDays(today, -3) }, { id: "n", status: "pending", date: addDays(today, -1) }], today).length, 1);
 
 console.log("All scheduler checks passed.");
+
+// Recall has its own daily pool: 60 min of study + recalls on top, never mixed
+const studied = Array.from({ length: 6 }, (_, i) => topic("r" + i, { studied: true, stage: 1, nextRecallDay: today, minutes: 30 })); // recall = 10 min each
+const newOnes = Array.from({ length: 2 }, (_, i) => topic("n" + i)); // 30 min each = full 60 study
+const both = generateSchedule(snap([...studied, ...newOnes], { recallMinutes: 30 }));
+const dayOf = (type, d) => both.planned.filter((p) => p.type === type && p.date === d).reduce((n, p) => n + p.minutes, 0);
+assert.equal(dayOf("study", today), 60, "recalls must not take study minutes");
+assert.equal(dayOf("recall", today), 30, "recall pool is its own 30 minutes");
+assert.ok(both.planned.filter((p) => p.type === "recall").every((p, _, a) => a.length === 6), "all 6 recalls are still planned (spilling to later days)");
+assert.ok(Object.keys(perDay(both.planned.filter((p) => p.type === "recall"))).every((d) => perDay(both.planned.filter((p) => p.type === "recall"))[d] <= 30));
+// Recalls already done today use up the recall pool, not the study pool
+const afterRecall = generateSchedule(snap([...studied, ...newOnes], { recallMinutes: 30,
+  tasks: [{ id: "x", topicId: "gone", type: "recall", date: today, minutes: 30, status: "done" }] }));
+assert.equal(afterRecall.planned.filter((p) => p.type === "recall" && p.date === today).length, 0);
+assert.equal(afterRecall.planned.filter((p) => p.type === "study" && p.date === today).reduce((n, p) => n + p.minutes, 0), 60);
+// Recalls that can't fit before the window ends produce a note
+const flood = Array.from({ length: 80 }, (_, i) => topic("f" + i, { studied: true, stage: 1, nextRecallDay: today, minutes: 60 }));
+assert.ok(generateSchedule(snap(flood, { recallMinutes: 10 })).notes.some((n) => n.kind === "recall-workload"));
+console.log("Recall pool checks passed.");

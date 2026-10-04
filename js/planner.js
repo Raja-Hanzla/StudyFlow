@@ -39,6 +39,7 @@ async function loadSnapshot(today) {
       minutes: t.estimated_minutes ?? 0, status: t.status,
     })),
     capacity: Object.fromEntries(WEEKDAYS.map((d) => [d, settings?.[`${d}_minutes`]])),
+    recallMinutes: settings?.daily_recall_minutes ?? undefined,
     defaultMinutes: settings?.daily_study_minutes ?? state.profile?.daily_study_minutes ?? 60,
   };
 }
@@ -178,5 +179,5 @@ export async function loadView() {
     recalled: snap.topics.filter((t) => t.stage >= 1).length,
     subjects: snap.raw.subjects.length,
   };
-  return { today, tasks, exams, stats, capacityToday: sch.capacityFor(snap, today) };
+  return { today, tasks, exams, stats, capacityToday: sch.capacityFor(snap, today), recallCapacityToday: sch.recallCapacityFor(snap) };
 }

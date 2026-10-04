@@ -14,6 +14,11 @@ Plain HTML, CSS and JavaScript (ES modules). It talks directly to your Supabase 
    - add the same address followed by `/**` to **Redirect URLs**.
    Email confirmation and password-reset links return to this address. `localhost` and `127.0.0.1` count as different addresses.
 3. Under **Authentication, Providers, Email**, keep **Confirm email** on.
+4. Recall time has its own daily limit, separate from study time. Run this once in the Supabase **SQL Editor** (safe to run twice):
+   ```sql
+   alter table public.settings add column if not exists daily_recall_minutes integer not null default 30;
+   ```
+   Until you do, the app plans 30 minutes of recall a day, and saving the Recall time setting shows a message pointing here.
 
 ## 2. Run it
 
@@ -55,6 +60,8 @@ node tests/backup.test.mjs
 | `css/style.css`, `css/responsive.css` | Components, and the tablet / phone layouts. |
 
 ## 5. How scheduling works, in short
+
+Study and recall have **two separate daily time pools**. Study tasks use your study minutes; recalls use the recall minutes (Settings, Recall time). A recall never takes time from studying, and studying never takes time from recalls.
 
 - A topic never studied gets a **study** task. A studied topic gets a **recall** task on its `next_recall_at` day.
 - Recall gaps grow with `recall_stage`: 1, 3, 7, 14, then 30 days. Hard topics come back sooner, easy ones later, and gaps shrink as an exam gets close.

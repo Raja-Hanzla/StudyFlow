@@ -24,6 +24,7 @@ export const CONFIG = {
   RECALL_FRACTION: 0.3,       // a recall takes about 30% of a topic's study time
   FINAL_REVIEW_WINDOW: 3,     // last recalls may move up to 3 days earlier, before an exam
   DEFAULT_TOPIC_MINUTES: 30,
+  DEFAULT_RECALL_MINUTES: 30, // daily recall time when the student hasn't set one
 };
 // How exam proximity shortens the gaps (see examMode)
 const EXAM_FACTOR = { normal: 1, focus: 0.75, intensive: 0.6, final: 0.5 };
@@ -45,6 +46,10 @@ export const dayToTimestamp = (day) => (day ? `${day}T12:00:00Z` : null);
 /** Minutes available on a day: that weekday's setting, else the daily default. */
 export function capacityFor(snapshot, day) {
   return snapshot.capacity?.[weekdayOf(day)] ?? snapshot.defaultMinutes ?? 60;
+}
+/** Minutes of RECALL time per day. It is its own pool: recalls never use up study minutes. */
+export function recallCapacityFor(snapshot) {
+  return snapshot.recallMinutes ?? CONFIG.DEFAULT_RECALL_MINUTES;
 }
 const recallMinutes = (studyMinutes) => Math.max(5, Math.round((studyMinutes * CONFIG.RECALL_FRACTION) / 5) * 5);
 
@@ -238,8 +243,10 @@ function compareDemands(a, b) {
 // =====================================================================
 /**
  * Places demands (most important first) on the earliest day that has room.
- * days: [{date, capacity, used}] (used = time already taken, e.g. finished tasks)
- * A task bigger than the whole day is still allowed on an empty day,
+ * days: [{date, capacity, used, recallCapacity, recallUsed}] (used = time already taken, e.g. finished tasks)
+ * Study tasks use the study pool (capacity/used). Recall tasks use their own pool
+ * (recallCapacity/recallUsed), so recalls never take time away from studying.
+ * A task bigger than the whole pool is still allowed on an empty day,
  * otherwise it could never be scheduled.
  * @returns {{placed: object[], unscheduled: object[]}}
  */
@@ -247,11 +254,15 @@ export function rebalanceDailyWorkload(demands, days) {
   const placed = [];
   const unscheduled = [];
   for (const d of [...demands].sort(compareDemands)) {
-    const day = days.find((x) =>
-      x.date >= d.earliest && x.date <= d.latest && x.capacity > 0 &&
-      (d.minutes <= x.capacity - x.used || x.used === 0));
+    const recall = d.type === "recall";
+    const day = days.find((x) => {
+      if (x.date < d.earliest || x.date > d.latest) return false;
+      const cap = recall ? x.recallCapacity : x.capacity;
+      const used = recall ? x.recallUsed : x.used;
+      return cap > 0 && (d.minutes <= cap - used || used === 0);
+    });
     if (day) {
-      day.used += d.minutes;
+      if (recall) day.recallUsed += d.minutes; else day.used += d.minutes;
       placed.push({ topicId: d.topicId, type: d.type, date: day.date, minutes: d.minutes });
     } else {
       unscheduled.push(d);
@@ -279,15 +290,25 @@ export function generateSchedule(snapshot) {
   const days = [];
   for (let i = 0; i < CONFIG.HORIZON_DAYS; i++) {
     const date = addDays(today, i);
-    days.push({ date, capacity: capacityFor(snapshot, date), used: 0 });
+    days.push({ date, capacity: capacityFor(snapshot, date), used: 0, recallCapacity: recallCapacityFor(snapshot), recallUsed: 0 });
   }
   // Today's time already taken: tasks finished today + old tasks still carried over.
-  days[0].used = snapshot.tasks
-    .filter((t) => (t.status !== "pending" && t.date === today) || (t.status === "pending" && t.date < today))
+  // Study tasks count against study time, recall tasks against recall time.
+  const takenToday = (type) => snapshot.tasks
+    .filter((t) => t.type === type && ((t.status !== "pending" && t.date === today) || (t.status === "pending" && t.date < today)))
     .reduce((sum, t) => sum + t.minutes, 0);
+  days[0].used = takenToday("study");
+  days[0].recallUsed = takenToday("recall");
 
   const { placed, unscheduled } = rebalanceDailyWorkload(demands, days);
   notes.push(...workloadNotes(snapshot, demands, days[0].used));
+  const lostRecalls = unscheduled.filter((d) => d.type === "recall").length;
+  if (lostRecalls > 0) {
+    notes.push({
+      kind: "recall-workload",
+      text: `${lostRecalls} recall${lostRecalls === 1 ? "" : "s"} didn't fit in the next ${CONFIG.HORIZON_DAYS} days with ${fmtMinutes(recallCapacityFor(snapshot))} of recall time a day. Raise "Recall time" in Settings to fit them.`,
+    });
+  }
   return { planned: placed, unscheduled, notes };
 }
 

@@ -75,14 +75,16 @@ async function draw(host) {
     return;
   }
 
-  const { today, tasks, exams, stats, capacityToday } = view;
+  const { today, tasks, exams, stats, capacityToday, recallCapacityToday } = view;
   const importance = (t) => PRIORITY_RANK[t.priority] * 3 + DIFFICULTY_RANK[t.difficulty];
   const overdue = tasks.filter((t) => t.status === "pending" && t.date < today).sort((a, b) => a.date.localeCompare(b.date));
   const todays = tasks.filter((t) => t.date === today)
     .sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || importance(a) - importance(b));
   const upcomingRecalls = tasks.filter((t) => t.status === "pending" && t.type === "recall" && t.date > today).slice(0, 6);
 
-  const plannedToday = todays.reduce((n, t) => n + t.minutes, 0) + overdue.reduce((n, t) => n + t.minutes, 0);
+  const minutesOf = (list, type) => list.filter((t) => t.type === type).reduce((n, t) => n + t.minutes, 0);
+  const plannedStudy = minutesOf(todays, "study") + minutesOf(overdue, "study");
+  const plannedRecall = minutesOf(todays, "recall") + minutesOf(overdue, "recall");
   const todayMinutes = sessions.filter((s) => toLocalDay(s.ended_at) === today).reduce((n, s) => n + (s.duration_minutes || 0), 0);
   const weekMinutes = sessions.reduce((n, s) => n + (s.duration_minutes || 0), 0);
   const firstName = (state.profile?.full_name || state.user?.user_metadata?.full_name || "").split(" ")[0];
@@ -129,7 +131,8 @@ async function draw(host) {
       }).join("")}</ul></section>` : ""}
 
     <section class="card"><h2>Today's plan</h2>
-      <p class="muted">${fmtMinutes(plannedToday)} planned of ${fmtMinutes(capacityToday)} available</p>
+      <p class="muted">Study: ${fmtMinutes(plannedStudy)} planned of ${fmtMinutes(capacityToday)} available.
+        Recall: ${fmtMinutes(plannedRecall)} planned of ${fmtMinutes(recallCapacityToday)} available.</p>
       ${todays.length ? `<ul class="plain">${todays.map((t) => taskRow(t, { actions: t.status === "pending" })).join("")}</ul>`
         : noTopics ? `<p>No subjects or topics yet. Start on the <a href="#/subjects">Subjects</a> page.</p>`
         : `<p>Nothing is scheduled for today.</p>`}

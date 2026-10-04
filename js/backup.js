@@ -134,6 +134,7 @@ export function validateBackup(json) {
       for (const day of WEEKDAYS) {
         if (settings[`${day}_minutes`] != null && !int(0, 720)(settings[`${day}_minutes`])) fail(`Settings: "${day}_minutes" must be 0 to 720.`);
       }
+      if (settings.daily_recall_minutes != null && !int(5, 240)(settings.daily_recall_minutes)) fail('Settings: "daily_recall_minutes" must be 5 to 240.');
       if (settings.dark_mode != null && typeof settings.dark_mode !== "boolean") fail('Settings: "dark_mode" must be true or false.');
     }
   }
@@ -189,7 +190,7 @@ export function prepareImport(backup, userId, newId = () => globalThis.crypto.ra
     plan.profile = p;
   }
   if (backup.settings) {
-    plan.settings = pick(backup.settings, ["daily_study_minutes", "dark_mode", ...WEEKDAYS.map((d) => `${d}_minutes`)], {});
+    plan.settings = pick(backup.settings, ["daily_study_minutes", "daily_recall_minutes", "dark_mode", ...WEEKDAYS.map((d) => `${d}_minutes`)], {});
   }
   return plan;
 }
