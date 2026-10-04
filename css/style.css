@@ -290,3 +290,8 @@ dialog { max-height: calc(100vh - 32px); overflow-y: auto; }
 .boot { margin: 0; padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); }
 
 .task-actions { display: contents; } /* on wide screens the buttons sit directly in the row */
+
+/* Dashboard: one block per subject (and one for recalls) inside "Today's plan" */
+.subject-block { border-left: 4px solid var(--subject, var(--border)); padding-left: var(--space-3); margin-top: var(--space-4); }
+.subject-block-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.subject-block-head h3 { margin: 0; font-size: 1.05rem; }

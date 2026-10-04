@@ -35,7 +35,7 @@ export async function renderSession(container, params = []) {
       <p class="muted"><span class="subject-dot"></span>${escapeHtml(task.subjectName || "")} › ${escapeHtml(task.chapterName || "")}</p>
       <h2>${escapeHtml(task.topicName)}</h2>
       <p><span class="tag tag-${task.type}">${isStudy ? "Study" : "Recall"}</span>
-         <span class="small">Planned: ${task.minutes} min</span>
+         ${task.minutes ? `<span class="small">Planned: ${task.minutes} min</span>` : ""}
          <span class="pill">${cap(task.difficulty)}</span><span class="pill">${cap(task.priority)} priority</span></p>
       <p class="session-text">${isStudy
         ? "Study this topic using your normal study method."

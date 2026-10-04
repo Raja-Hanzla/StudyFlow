@@ -9,7 +9,7 @@ import { parseTopicLines } from "./bulk.js";
 import { DIFFICULTIES, PRIORITIES, SUBJECT_COLORS, DEFAULT_DIFFICULTY, DEFAULT_PRIORITY } from "./constants.js";
 import { $, escapeHtml, refreshIcons, toDateString } from "./utils.js";
 
-const STEP_NAMES = ["About you", "Subjects & exams", "Study time", "Chapters & topics", "Review"];
+const STEP_NAMES = ["About you", "Subjects, exams & time", "Chapters & topics", "Review"];
 const LAST = STEP_NAMES.length - 1;
 
 let draft;   // everything the student has entered so far
@@ -17,7 +17,7 @@ let onDone;  // called after a successful save
 
 // ---------- Draft ----------
 const newChapter = () => ({ name: "", topics: "", difficulty: DEFAULT_DIFFICULTY, priority: DEFAULT_PRIORITY, id: null, topicsSaved: false });
-const newSubject = () => ({ name: "", examDate: "", id: null, examId: null, chapters: [newChapter()] });
+const newSubject = () => ({ name: "", examDate: "", id: null, examId: null, dailyMinutes: 60, topicsPerDay: 1, chapters: [newChapter()] });
 
 const draftKey = () => `studyflow-onboarding-${state.user.id}`;
 const saveDraft = () => localStorage.setItem(draftKey(), JSON.stringify(draft));
@@ -30,7 +30,7 @@ function loadDraft() {
   return {
     step: 0, saving: false,
     fullName: state.profile?.full_name || state.user.user_metadata?.full_name || "",
-    className: "", dailyMinutes: 60, topicMinutes: 30,
+    className: "",
     subjects: [newSubject()],
   };
 }
@@ -68,13 +68,17 @@ const steps = [
 
   { // 1 — Subjects and exam dates
     render: () => `
-      <p class="muted">Add each subject and, if you know it, its exam date.</p>
+      <p class="muted">Add each subject, its exam date if you know it, and how long you will study it each day. New topics per day share that time. Recalls are extra and have no time limit.</p>
       ${draft.subjects.map((s, i) => `
         <div class="row">
           <div class="field grow"><label for="sub-${i}">Subject</label>
             <input id="sub-${i}" data-f="name" data-s="${i}" type="text" value="${escapeHtml(s.name)}" /></div>
           <div class="field"><label for="exam-${i}">Exam date (optional)</label>
             <input id="exam-${i}" data-f="examDate" data-s="${i}" type="date" min="${toDateString()}" value="${s.examDate}" /></div>
+          <div class="field"><label for="min-${i}">Minutes a day</label>
+            <input id="min-${i}" data-f="dailyMinutes" data-s="${i}" type="number" min="5" max="720" step="5" value="${escapeHtml(s.dailyMinutes)}" /></div>
+          <div class="field"><label for="tpd-${i}">Topics a day</label>
+            <input id="tpd-${i}" data-f="topicsPerDay" data-s="${i}" type="number" min="1" max="20" step="1" value="${escapeHtml(s.topicsPerDay)}" /></div>
           ${draft.subjects.length > 1
             ? `<button type="button" class="icon-btn" data-action="remove-subject" data-s="${i}" aria-label="Remove subject ${i + 1}"><i data-lucide="x"></i></button>` : ""}
         </div>`).join("")}
@@ -84,29 +88,21 @@ const steps = [
       if (!draft.subjects.length) { draft.subjects = [newSubject()]; throw new Error("Add at least one subject."); }
       const names = draft.subjects.map((s) => s.name.trim().toLowerCase());
       if (new Set(names).size !== names.length) throw new Error("Each subject needs a different name.");
-      draft.subjects.forEach((s) => (s.name = s.name.trim()));
+      draft.subjects.forEach((s) => {
+        s.name = s.name.trim();
+        s.dailyMinutes = Number(s.dailyMinutes);
+        s.topicsPerDay = Number(s.topicsPerDay);
+        if (!Number.isInteger(s.dailyMinutes) || s.dailyMinutes < 5 || s.dailyMinutes > 720)
+          throw new Error(`${s.name}: minutes a day must be between 5 and 720.`);
+        if (!Number.isInteger(s.topicsPerDay) || s.topicsPerDay < 1 || s.topicsPerDay > 20)
+          throw new Error(`${s.name}: topics a day must be between 1 and 20.`);
+      });
       if (draft.subjects.some((s) => s.examDate && s.examDate < toDateString()))
         throw new Error("An exam date is in the past. Pick a date from today onward.");
     },
   },
 
-  { // 2 — Study time
-    render: () => `
-      <p class="muted">How much time can you study on a normal day? You can set different amounts for each weekday later in Settings.</p>
-      <div class="chips" role="group" aria-label="Quick choices">
-        ${[30, 60, 120, 180].map((m) => `<button type="button" class="btn" data-action="set-daily" data-minutes="${m}">${m < 60 ? m + " min" : m / 60 + " h"}</button>`).join("")}
-      </div>
-      ${input("dailyMinutes", "Minutes per day", 'data-f="dailyMinutes" type="number" min="10" max="720" step="5" required', draft.dailyMinutes)}
-      ${input("topicMinutes", "Usual minutes to study one topic", 'data-f="topicMinutes" type="number" min="5" max="240" step="5" required', draft.topicMinutes)}`,
-    next() {
-      draft.dailyMinutes = Number(draft.dailyMinutes);
-      draft.topicMinutes = Number(draft.topicMinutes);
-      if (!(draft.dailyMinutes >= 10 && draft.dailyMinutes <= 720)) throw new Error("Daily study time must be between 10 and 720 minutes.");
-      if (!(draft.topicMinutes >= 5 && draft.topicMinutes <= 240)) throw new Error("Time per topic must be between 5 and 240 minutes.");
-    },
-  },
-
-  { // 3 — Chapters and topics
+  { // 2 — Chapters and topics
     render: () => `
       <p class="muted">Add chapters and paste topics, one per line. Difficulty and priority apply to the whole chapter.
         To override one topic, write it like <code>Velocity | hard | high</code>.</p>
@@ -145,7 +141,7 @@ const steps = [
     },
   },
 
-  { // 4 — Review and save
+  { // 3 — Review and save
     render: () => {
       const chapters = draft.subjects.reduce((n, s) => n + s.chapters.length, 0);
       const topics = draft.subjects.reduce((n, s) => n + s.chapters.reduce((m, c) => m + parseTopicLines(c.topics, c).length, 0), 0);
@@ -155,7 +151,7 @@ const steps = [
           <li><strong>${escapeHtml(draft.fullName)}</strong>, ${escapeHtml(draft.className)}</li>
           <li>${draft.subjects.length} subject(s), ${exams} exam date(s)</li>
           <li>${chapters} chapter(s), ${topics} topic(s)</li>
-          <li>${draft.dailyMinutes} minutes per day, ${draft.topicMinutes} minutes per topic</li>
+          <li>${draft.subjects.map((s) => `${escapeHtml(s.name)}: ${s.dailyMinutes} min, ${s.topicsPerDay} topic${s.topicsPerDay === 1 ? "" : "s"} a day`).join("; ")}</li>
         </ul>
         <p id="save-progress" class="muted" role="status">${draft.saving ? "Some of your data is already saved. Press the button to finish the rest." : "Nothing is saved until you press the button."}</p>`;
     },
@@ -171,7 +167,7 @@ async function finish() {
 
   say("Saving your subjects and chapters...");
   for (const [si, s] of draft.subjects.entries()) {
-    if (!s.id) { s.id = (await db.createSubject({ name: s.name, color: SUBJECT_COLORS[si % SUBJECT_COLORS.length] })).id; saveDraft(); }
+    if (!s.id) { s.id = (await db.createSubject({ name: s.name, color: SUBJECT_COLORS[si % SUBJECT_COLORS.length], dailyMinutes: s.dailyMinutes, topicsPerDay: s.topicsPerDay })).id; saveDraft(); }
     if (s.examDate && !s.examId) {
       s.examId = (await db.createExam({ subjectId: s.id, name: `${s.name} exam`, examDate: s.examDate })).id; saveDraft();
     }
@@ -179,15 +175,17 @@ async function finish() {
       if (!c.id) { c.id = (await db.createChapter({ subjectId: s.id, name: c.name, chapterNumber: ci + 1 })).id; saveDraft(); }
       if (!c.topicsSaved) {
         say(`Saving topics for ${s.name}...`);
-        await db.createTopics(c.id, parseTopicLines(c.topics, c), draft.topicMinutes);
+        await db.createTopics(c.id, parseTopicLines(c.topics, c));
         c.topicsSaved = true; saveDraft();
       }
     }
   }
-  say("Saving your study time...");
-  await db.saveSettings({ dailyMinutes: draft.dailyMinutes });
+  say("Saving your settings...");
+  // The profile keeps one overall figure: the subjects' daily minutes added up (kept within the allowed range).
+  const dailyMinutes = Math.min(720, Math.max(10, draft.subjects.reduce((n, s) => n + s.dailyMinutes, 0)));
+  await db.saveSettings({ dailyMinutes });
   // The profile is saved LAST: a saved class name means "onboarding finished".
-  await db.updateProfile({ fullName: draft.fullName.trim(), className: draft.className.trim(), dailyMinutes: draft.dailyMinutes });
+  await db.updateProfile({ fullName: draft.fullName.trim(), className: draft.className.trim(), dailyMinutes });
 
   say("Building your first study plan...");
   await refreshSchedule(); // creates the first study tasks
@@ -227,12 +225,11 @@ function render() {
     const btn = e.target.closest("[data-action]");
     if (!btn) return;
     collectFields(form);
-    const { action, s, c, minutes } = btn.dataset;
+    const { action, s, c } = btn.dataset;
     if (action === "add-subject") draft.subjects.push(newSubject());
     else if (action === "remove-subject") draft.subjects.splice(+s, 1);
     else if (action === "add-chapter") draft.subjects[+s].chapters.push(newChapter());
     else if (action === "remove-chapter") draft.subjects[+s].chapters.splice(+c, 1);
-    else if (action === "set-daily") draft.dailyMinutes = Number(minutes);
     else if (action === "back") draft.step -= 1;
     saveDraft();
     render();
@@ -264,6 +261,7 @@ function render() {
 export function showOnboarding(opts) {
   onDone = opts.onDone;
   draft = loadDraft();
+  draft.step = Math.min(draft.step, LAST); // an older draft may have more steps
   if (draft.saving) draft.step = LAST; // a save was interrupted: go straight to the retry screen
   render();
 }

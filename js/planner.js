@@ -4,7 +4,7 @@
 // The scheduling decisions themselves live in scheduler.js.
 import * as db from "./database.js";
 import * as sch from "./scheduler.js";
-import { TOPIC_STATUS, WEEKDAYS } from "./constants.js";
+import { TOPIC_STATUS } from "./constants.js";
 import { toDateString, toLocalDay } from "./utils.js";
 import { state } from "./state.js";
 
@@ -15,32 +15,34 @@ export const getToday = () => toDateString();
 // ---------- Loading ----------
 /** Reads everything the scheduler needs and converts it to the scheduler's plain shapes. */
 async function loadSnapshot(today) {
-  const [subjects, exams, chapters, topics, tasks, settings] = await Promise.all([
-    db.getSubjects(), db.getExams(), db.getChapters(), db.getTopics(), db.getTasks(today), db.getSettings(),
+  const [subjects, exams, chapters, topics, tasks] = await Promise.all([
+    db.getSubjects(), db.getExams(), db.getChapters(), db.getTopics(), db.getTasks(today),
   ]);
   const chapterById = new Map(chapters.map((c) => [c.id, c]));
+  const subjectOfTopic = new Map(topics.map((t) => [t.id, chapterById.get(t.chapter_id)?.subject_id]));
   return {
     today,
     raw: { subjects, chapters, topics, exams },
-    subjects: subjects.map((s) => ({ id: s.id, name: s.name })),
+    subjects: subjects.map((s) => ({
+      id: s.id, name: s.name,
+      dailyMinutes: s.daily_minutes ?? sch.CONFIG.DEFAULT_SUBJECT_MINUTES,
+      topicsPerDay: s.topics_per_day ?? sch.CONFIG.DEFAULT_TOPICS_PER_DAY,
+    })),
     exams: exams.map((e) => ({ subjectId: e.subject_id, date: toLocalDay(e.exam_date) })),
     topics: topics.filter((t) => chapterById.has(t.chapter_id)).map((t) => {
       const chapter = chapterById.get(t.chapter_id);
       return {
         id: t.id, chapterId: t.chapter_id, subjectId: chapter.subject_id, chapterNumber: chapter.chapter_number ?? 0,
         name: t.name, difficulty: t.difficulty, priority: t.priority,
-        minutes: t.estimated_minutes || sch.CONFIG.DEFAULT_TOPIC_MINUTES,
         studied: Boolean(t.last_studied_at), stage: t.recall_stage ?? 0,
         nextRecallDay: t.next_recall_at ? toLocalDay(t.next_recall_at) : null,
       };
     }),
     tasks: tasks.map((t) => ({
-      id: t.id, topicId: t.topic_id, type: t.task_type, date: toLocalDay(t.scheduled_date),
+      id: t.id, topicId: t.topic_id, subjectId: subjectOfTopic.get(t.topic_id) ?? null,
+      type: t.task_type, date: toLocalDay(t.scheduled_date),
       minutes: t.estimated_minutes ?? 0, status: t.status,
     })),
-    capacity: Object.fromEntries(WEEKDAYS.map((d) => [d, settings?.[`${d}_minutes`]])),
-    recallMinutes: settings?.daily_recall_minutes ?? undefined,
-    defaultMinutes: settings?.daily_study_minutes ?? state.profile?.daily_study_minutes ?? 60,
   };
 }
 
@@ -68,9 +70,9 @@ async function doRefresh() {
   const diff = sch.diffSchedule(existing, result.planned);
 
   await db.deleteTasks(diff.remove);
-  for (const u of diff.update) await db.updateTask(u.id, { scheduled_date: u.date, estimated_minutes: u.minutes });
+  for (const u of diff.update) await db.updateTask(u.id, { scheduled_date: u.date, estimated_minutes: u.minutes || null });
   await db.insertTasks(diff.insert.map((p) => ({
-    topic_id: p.topicId, task_type: p.type, scheduled_date: p.date, estimated_minutes: p.minutes, status: "pending",
+    topic_id: p.topicId, task_type: p.type, scheduled_date: p.date, estimated_minutes: p.minutes || null, status: "pending",
   })));
   return result;
 }
@@ -152,6 +154,20 @@ export async function completeTask(taskId, options) { await recordResult(taskId,
 export async function markTaskPartial(taskId, options) { await recordResult(taskId, "partial", options); await refreshSchedule(); }
 export async function markTaskMissed(taskId, options) { await recordResult(taskId, "missed", options); await refreshSchedule(); }
 
+/**
+ * "I studied this subject today": marks every pending study task of the subject (today's,
+ * and any carried over) as done. Safe to retry: finished tasks are no longer pending.
+ */
+export async function completeSubjectStudy(subjectId) {
+  const snap = await loadSnapshot(getToday());
+  const ids = snap.tasks
+    .filter((t) => t.subjectId === subjectId && t.type === "study" && t.status === "pending" && t.date <= snap.today)
+    .map((t) => t.id);
+  for (const id of ids) await recordResult(id, "done");
+  await refreshSchedule();
+  return ids.length;
+}
+
 // ---------- Reading the plan (for pages) ----------
 /** Tasks with their topic / chapter / subject names, ready to display. */
 export async function loadView() {
@@ -166,7 +182,7 @@ export async function loadView() {
     const ch = chapter.get(tp.chapter_id);
     const su = subject.get(ch?.subject_id);
     return { ...t, topicName: tp.name, chapterName: ch?.name, subjectName: su?.name, color: su?.color,
-             difficulty: tp.difficulty, priority: tp.priority };
+             difficulty: tp.difficulty, priority: tp.priority, subjectId: su?.id };
   }).filter(Boolean).sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.topicName.localeCompare(b.topicName));
   const exams = snap.raw.exams
     .map((e) => ({ date: toLocalDay(e.exam_date), subjectName: subject.get(e.subject_id)?.name ?? "" }))
@@ -179,5 +195,5 @@ export async function loadView() {
     recalled: snap.topics.filter((t) => t.stage >= 1).length,
     subjects: snap.raw.subjects.length,
   };
-  return { today, tasks, exams, stats, capacityToday: sch.capacityFor(snap, today), recallCapacityToday: sch.recallCapacityFor(snap) };
+  return { today, tasks, exams, stats, subjects: snap.subjects };
 }

@@ -5,10 +5,9 @@
 //
 // THE IDEA
 //   The plan is derived from each topic's state:
-//     never studied        -> a STUDY task is wanted
-//     studied              -> a RECALL task is wanted on its next_recall_at day
-//   Wanted work ("demands") is sorted by importance and placed on the
-//   earliest day with free time. What doesn't fit simply waits.
+//     never studied        -> a STUDY task is wanted, inside its subject's daily time
+//     studied              -> a RECALL task is wanted on its next_recall_at day (no time, no limit)
+//   Each subject has "minutes per day" and "topics per day". That is the only study limit.
 //
 // All dates are plain "YYYY-MM-DD" strings.
 // =====================================================================
@@ -21,16 +20,14 @@ export const CONFIG = {
   PARTIAL_TIME_FACTOR: 0.5,   // assumed share of the planned time spent on a "partial" task
   HORIZON_DAYS: 14,           // how many days ahead tasks are created
   OVERDUE_MAX_DAYS: 2,        // a pending task older than this is counted as missed
-  RECALL_FRACTION: 0.3,       // a recall takes about 30% of a topic's study time
+  DEFAULT_SUBJECT_MINUTES: 60, // a subject's study time per day, until the student sets it
+  DEFAULT_TOPICS_PER_DAY: 1,
   FINAL_REVIEW_WINDOW: 3,     // last recalls may move up to 3 days earlier, before an exam
-  DEFAULT_TOPIC_MINUTES: 30,
-  DEFAULT_RECALL_MINUTES: 30, // daily recall time when the student hasn't set one
 };
 // How exam proximity shortens the gaps (see examMode)
 const EXAM_FACTOR = { normal: 1, focus: 0.75, intensive: 0.6, final: 0.5 };
 const PRIORITY_RANK = { high: 0, normal: 1, low: 2 };
 const DIFFICULTY_RANK = { hard: 0, medium: 1, easy: 2 };
-const NO_LIMIT = "9999-12-31";
 
 // ---------- Date helpers (UTC math on "YYYY-MM-DD", so no timezone surprises) ----------
 const DAY_MS = 86400000;
@@ -42,16 +39,6 @@ export const weekdayOf = (day) => WEEKDAY_NAMES[new Date(toMs(day)).getUTCDay()]
 const maxDay = (a, b) => (a > b ? a : b);
 /** Stored at noon UTC so the same calendar day shows in every timezone. */
 export const dayToTimestamp = (day) => (day ? `${day}T12:00:00Z` : null);
-
-/** Minutes available on a day: that weekday's setting, else the daily default. */
-export function capacityFor(snapshot, day) {
-  return snapshot.capacity?.[weekdayOf(day)] ?? snapshot.defaultMinutes ?? 60;
-}
-/** Minutes of RECALL time per day. It is its own pool: recalls never use up study minutes. */
-export function recallCapacityFor(snapshot) {
-  return snapshot.recallMinutes ?? CONFIG.DEFAULT_RECALL_MINUTES;
-}
-const recallMinutes = (studyMinutes) => Math.max(5, Math.round((studyMinutes * CONFIG.RECALL_FRACTION) / 5) * 5);
 
 // =====================================================================
 // 1. Exam proximity
@@ -139,65 +126,20 @@ export function applyResult({ topic, type, result, today, examDate, nowIso }) {
 }
 
 // =====================================================================
-// 3. Wanted work ("demands")
+// 3. What is wanted
 // =====================================================================
-/** A demand = one task the topic needs: {key, topicId, type, minutes, earliest, latest, ...} */
-export function buildDemands(snapshot) {
-  const { today } = snapshot;
-  const exams = examsBySubject(snapshot.exams, today);
-  const subjectName = new Map(snapshot.subjects.map((s) => [s.id, s.name]));
-  // Tasks already finished today, and old pending tasks that are still being carried over:
-  const handled = new Set(snapshot.tasks.filter((t) => t.status !== "pending" && t.date === today).map((t) => `${t.topicId}|${t.type}`));
-  const carried = new Set(snapshot.tasks.filter((t) => t.status === "pending" && t.date < today).map((t) => `${t.topicId}|${t.type}`));
+// STUDY: every subject has "minutes per day" and "topics per day". Each day the subject gets
+//        that many unstudied topics (most important first) and the subject's minutes are
+//        shared between them. Marking the subject done studies all of them at once.
+// RECALL: a studied topic is recalled on its next_recall_at day. Recalls have NO time and NO
+//        daily limit: whatever is due is scheduled on its day.
+const roundTo5 = (n) => Math.max(5, Math.round(n / 5) * 5);
 
-  const demands = [];
-  const closed = new Set();
-
-  for (const topic of snapshot.topics) {
-    const info = exams.get(topic.subjectId);
-    if (info && !info.upcoming) { closed.add(topic.subjectId); continue; } // all exams are in the past
-    const examDate = info?.upcoming ?? null;
-    const lastDay = examDate ? addDays(examDate, -1) : null;      // never plan work after this day
-    if (lastDay !== null && lastDay < today) continue;            // exam is today: no new work
-    const daysLeft = examDate ? diffDays(examDate, today) : null;
-
-    const type = topic.studied ? "recall" : "study";
-    const key = `${topic.id}|${type}`;
-    if (carried.has(key)) continue; // an overdue task for it already exists
-
-    let due = today;
-    let overdue = false;
-    let earliest;
-    if (type === "study") {
-      if (handled.has(key)) due = addDays(today, 1);              // partial/missed today: try tomorrow
-      if (lastDay !== null && due > lastDay) continue;
-      earliest = due;
-    } else {
-      due = topic.nextRecallDay ?? addDays(today, 1);
-      if (due < today) { overdue = true; due = today; }
-      if (handled.has(key) && due <= today) due = addDays(today, 1);
-      // In the last week, strong easy topics are left alone: only necessary recalls remain.
-      const strong = topic.difficulty === "easy" && topic.priority !== "high" && topic.stage >= 2;
-      if (examMode(daysLeft) === "final" && strong) continue;
-      earliest = due;
-      // A recall that would fall after the exam moves into the last days before it.
-      if (lastDay !== null && due > lastDay) earliest = maxDay(today, addDays(lastDay, -CONFIG.FINAL_REVIEW_WINDOW));
-    }
-
-    demands.push({
-      key, topicId: topic.id, type, subjectId: topic.subjectId, examDate, examDays: daysLeft,
-      minutes: type === "study" ? topic.minutes : recallMinutes(topic.minutes),
-      earliest, latest: lastDay ?? NO_LIMIT, overdue,
-      priority: topic.priority, difficulty: topic.difficulty,
-      chapterNumber: topic.chapterNumber, name: topic.name,
-    });
-  }
-
-  const notes = [...closed].map((id) => ({
-    kind: "exam-passed",
-    text: `${subjectName.get(id) ?? "A subject"}: the exam date has passed, so nothing is scheduled. Update the exam date on the Subjects page if this is wrong.`,
-  }));
-  return { demands, notes };
+/** Order inside one subject: high priority, then hard, then chapter order, then name. */
+function compareTopics(a, b) {
+  return (PRIORITY_RANK[a.priority] ?? 1) - (PRIORITY_RANK[b.priority] ?? 1) ||
+    (DIFFICULTY_RANK[a.difficulty] ?? 1) - (DIFFICULTY_RANK[b.difficulty] ?? 1) ||
+    a.chapterNumber - b.chapterNumber || a.name.localeCompare(b.name) || a.id.localeCompare(b.id); // fixed tie-breakers = deterministic
 }
 
 function examsBySubject(exams, today) {
@@ -210,65 +152,94 @@ function examsBySubject(exams, today) {
   return map;
 }
 
-// =====================================================================
-// 4. Importance order
-// =====================================================================
-const examBand = (days) => (days === null ? 3 : days < 7 ? 0 : days < 14 ? 1 : days <= 30 ? 2 : 3);
+/** Recalls to place: [{topicId, type:"recall", date, minutes:0}] */
+function planRecalls(snapshot, exams, handled, carried) {
+  const { today } = snapshot;
+  const lastPlannable = addDays(today, CONFIG.HORIZON_DAYS - 1);
+  const planned = [];
+  for (const topic of snapshot.topics) {
+    if (!topic.studied) continue;
+    const info = exams.get(topic.subjectId);
+    if (info && !info.upcoming) continue;                         // all exams are in the past
+    const examDate = info?.upcoming ?? null;
+    const lastDay = examDate ? addDays(examDate, -1) : null;      // never plan work after this day
+    if (lastDay !== null && lastDay < today) continue;            // exam is today: no new work
+    const key = `${topic.id}|recall`;
+    if (carried.has(key)) continue;                               // an overdue recall already exists
+    const daysLeft = examDate ? diffDays(examDate, today) : null;
 
-/**
- * Sort key for a demand: smaller = more important. Compared left to right,
- *   1 overdue first   2 closer exam   3 high priority   4 hard topics
- *   5 unfinished (study) before ordinary recalls
- * It is only used for ordering. It is never shown as a score.
- */
-export function calculateTaskPriority(d) {
-  return [
-    d.overdue ? 0 : 1,
-    examBand(d.examDays),
-    PRIORITY_RANK[d.priority] ?? 1,
-    DIFFICULTY_RANK[d.difficulty] ?? 1,
-    d.type === "study" ? 0 : 1,
-  ];
-}
-function compareDemands(a, b) {
-  const ka = calculateTaskPriority(a);
-  const kb = calculateTaskPriority(b);
-  for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
-  return a.earliest.localeCompare(b.earliest) || a.chapterNumber - b.chapterNumber ||
-    a.name.localeCompare(b.name) || a.key.localeCompare(b.key);   // fixed tie-breakers = deterministic
+    let due = topic.nextRecallDay ?? addDays(today, 1);
+    if (due < today) due = today;                                 // overdue: do it today
+    if (handled.has(key) && due <= today) due = addDays(today, 1);
+    // In the last week, strong easy topics are left alone: only necessary recalls remain.
+    const strong = topic.difficulty === "easy" && topic.priority !== "high" && topic.stage >= 2;
+    if (examMode(daysLeft) === "final" && strong) continue;
+    // A recall that would fall after the exam moves into the last days before it.
+    if (lastDay !== null && due > lastDay) due = maxDay(today, addDays(lastDay, -CONFIG.FINAL_REVIEW_WINDOW));
+    if (due > lastPlannable) continue;                            // beyond the planning window: later
+    planned.push({ topicId: topic.id, type: "recall", date: due, minutes: 0 });
+  }
+  return planned;
 }
 
-// =====================================================================
-// 5. Daily capacity
-// =====================================================================
-/**
- * Places demands (most important first) on the earliest day that has room.
- * days: [{date, capacity, used, recallCapacity, recallUsed}] (used = time already taken, e.g. finished tasks)
- * Study tasks use the study pool (capacity/used). Recall tasks use their own pool
- * (recallCapacity/recallUsed), so recalls never take time away from studying.
- * A task bigger than the whole pool is still allowed on an empty day,
- * otherwise it could never be scheduled.
- * @returns {{placed: object[], unscheduled: object[]}}
- */
-export function rebalanceDailyWorkload(demands, days) {
-  const placed = [];
-  const unscheduled = [];
-  for (const d of [...demands].sort(compareDemands)) {
-    const recall = d.type === "recall";
-    const day = days.find((x) => {
-      if (x.date < d.earliest || x.date > d.latest) return false;
-      const cap = recall ? x.recallCapacity : x.capacity;
-      const used = recall ? x.recallUsed : x.used;
-      return cap > 0 && (d.minutes <= cap - used || used === 0);
-    });
-    if (day) {
-      if (recall) day.recallUsed += d.minutes; else day.used += d.minutes;
-      placed.push({ topicId: d.topicId, type: d.type, date: day.date, minutes: d.minutes });
-    } else {
-      unscheduled.push(d);
+/** Study tasks to place, subject by subject. Also returns notes. */
+function planStudy(snapshot, exams, handled, carried) {
+  const { today } = snapshot;
+  const planned = [];
+  const notes = [];
+  for (const subject of snapshot.subjects) {
+    const info = exams.get(subject.id);
+    const topics = snapshot.topics.filter((t) => t.subjectId === subject.id);
+    if (info && !info.upcoming) {
+      if (topics.some((t) => !t.studied)) {
+        notes.push({ kind: "exam-passed", text: `${subject.name}: the exam date has passed, so nothing is scheduled. Update the exam date on the Subjects page if this is wrong.` });
+      }
+      continue;
+    }
+    const examDate = info?.upcoming ?? null;
+    const lastDay = examDate ? addDays(examDate, -1) : null;
+    const perDay = Math.max(1, subject.topicsPerDay ?? 1);
+    const minutes = subject.dailyMinutes ?? 60;
+
+    // Today's quota is already partly used by topics finished (or tried) today and by carried-over ones.
+    const consumed = snapshot.tasks.filter((t) => t.type === "study" && t.subjectId === subject.id &&
+      ((t.status !== "pending" && t.date === today) || (t.status === "pending" && t.date < today))).length;
+
+    const queue = topics
+      .filter((t) => !t.studied && !carried.has(`${t.id}|study`))
+      .sort(compareTopics)
+      .map((t) => ({ t, from: handled.has(`${t.id}|study`) ? 1 : 0 })); // tried today (partial/missed): from tomorrow
+    const total = queue.length;
+    let placedCount = 0;
+
+    for (let i = 0; i < CONFIG.HORIZON_DAYS && queue.length; i++) {
+      const date = addDays(today, i);
+      if (lastDay !== null && date > lastDay) break;
+      const slots = i === 0 ? Math.max(0, perDay - consumed) : perDay;
+      const todays = [];
+      for (let q = 0; q < queue.length && todays.length < slots; q++) {
+        if (queue[q].from <= i) todays.push(q);
+      }
+      if (!todays.length) continue;
+      const share = roundTo5(minutes / (todays.length + (i === 0 ? consumed : 0)));
+      for (const q of todays) planned.push({ topicId: queue[q].t.id, type: "study", date, minutes: share });
+      placedCount += todays.length;
+      for (let k = todays.length - 1; k >= 0; k--) queue.splice(todays[k], 1);
+    }
+
+    // Will everything be studied before the exam at this pace?
+    if (examDate) {
+      let slotsLeft = 0;
+      for (let day = today, i = 0; day <= lastDay; day = addDays(day, 1), i++) slotsLeft += i === 0 ? Math.max(0, perDay - consumed) : perDay;
+      if (total > slotsLeft) {
+        notes.push({
+          kind: "workload",
+          text: `${subject.name}: ${total} topic${total === 1 ? "" : "s"} still to study, but at ${perDay} a day only ${slotsLeft} fit before the exam on ${examDate}. Raise "topics per day" for this subject to finish in time.`,
+        });
+      }
     }
   }
-  return { placed, unscheduled };
+  return { planned, notes };
 }
 
 /** Pending tasks that have been overdue too long. The planner counts them as missed. */
@@ -277,63 +248,24 @@ export function rescheduleMissedTasks(tasks, today) {
 }
 
 // =====================================================================
-// 6. The whole schedule
+// 4. The whole schedule
 // =====================================================================
 /**
- * snapshot = { today, subjects, exams, topics, tasks, capacity, defaultMinutes } (see planner.js)
+ * snapshot = { today, subjects:[{id,name,dailyMinutes,topicsPerDay}], exams, topics, tasks } (see planner.js)
+ * tasks need: topicId, subjectId, type, date, status.
  * @returns {{planned: object[], unscheduled: object[], notes: object[]}}
  */
 export function generateSchedule(snapshot) {
   const { today } = snapshot;
-  const { demands, notes } = buildDemands(snapshot);
+  const exams = examsBySubject(snapshot.exams, today);
+  // Tasks already finished today, and old pending tasks that are still being carried over:
+  const handled = new Set(snapshot.tasks.filter((t) => t.status !== "pending" && t.date === today).map((t) => `${t.topicId}|${t.type}`));
+  const carried = new Set(snapshot.tasks.filter((t) => t.status === "pending" && t.date < today).map((t) => `${t.topicId}|${t.type}`));
 
-  const days = [];
-  for (let i = 0; i < CONFIG.HORIZON_DAYS; i++) {
-    const date = addDays(today, i);
-    days.push({ date, capacity: capacityFor(snapshot, date), used: 0, recallCapacity: recallCapacityFor(snapshot), recallUsed: 0 });
-  }
-  // Today's time already taken: tasks finished today + old tasks still carried over.
-  // Study tasks count against study time, recall tasks against recall time.
-  const takenToday = (type) => snapshot.tasks
-    .filter((t) => t.type === type && ((t.status !== "pending" && t.date === today) || (t.status === "pending" && t.date < today)))
-    .reduce((sum, t) => sum + t.minutes, 0);
-  days[0].used = takenToday("study");
-  days[0].recallUsed = takenToday("recall");
-
-  const { placed, unscheduled } = rebalanceDailyWorkload(demands, days);
-  notes.push(...workloadNotes(snapshot, demands, days[0].used));
-  const lostRecalls = unscheduled.filter((d) => d.type === "recall").length;
-  if (lostRecalls > 0) {
-    notes.push({
-      kind: "recall-workload",
-      text: `${lostRecalls} recall${lostRecalls === 1 ? "" : "s"} didn't fit in the next ${CONFIG.HORIZON_DAYS} days with ${fmtMinutes(recallCapacityFor(snapshot))} of recall time a day. Raise "Recall time" in Settings to fit them.`,
-    });
-  }
-  return { planned: placed, unscheduled, notes };
+  const study = planStudy(snapshot, exams, handled, carried);
+  const recalls = planRecalls(snapshot, exams, handled, carried);
+  return { planned: [...study.planned, ...recalls], unscheduled: [], notes: study.notes };
 }
-
-/** Plain arithmetic: is there enough free time for the study that remains before each exam? */
-function workloadNotes(snapshot, demands, usedToday) {
-  const byExam = new Map();
-  for (const d of demands) {
-    if (d.type === "study" && d.examDate) byExam.set(d.examDate, (byExam.get(d.examDate) ?? 0) + d.minutes);
-  }
-  const notes = [];
-  let needed = 0;
-  for (const date of [...byExam.keys()].sort()) {
-    needed += byExam.get(date);
-    let available = -usedToday;
-    for (let day = snapshot.today; day < date; day = addDays(day, 1)) available += capacityFor(snapshot, day);
-    if (needed > Math.max(0, available)) {
-      notes.push({
-        kind: "workload",
-        text: `Before the exam on ${date}: about ${fmtMinutes(needed)} of study remains and about ${fmtMinutes(Math.max(0, available))} is free. The most important topics are scheduled first.`,
-      });
-    }
-  }
-  return notes;
-}
-const fmtMinutes = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`);
 
 /**
  * Compares the wanted plan with the pending future tasks already saved.

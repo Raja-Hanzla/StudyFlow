@@ -45,7 +45,7 @@ function taskRow(t, { actions = false, note = "", showStatus = true } = {}) {
       <div class="topic-main"><strong><span class="subject-dot"></span>${name}</strong>
         <span class="muted small">${escapeHtml(t.subjectName || "")} › ${escapeHtml(t.chapterName || "")}</span></div>
       <span class="tag tag-${t.type}">${t.type === "study" ? "Study" : "Recall"}</span>
-      <span class="small">${t.minutes} min</span>
+      ${t.minutes ? `<span class="small">${t.minutes} min</span>` : ""}
       <span class="pill" title="Difficulty">${cap(t.difficulty)}</span>
       <span class="pill" title="Priority">${cap(t.priority)} priority</span>
       ${note}${end}
@@ -75,16 +75,20 @@ async function draw(host) {
     return;
   }
 
-  const { today, tasks, exams, stats, capacityToday, recallCapacityToday } = view;
+  const { today, tasks, exams, stats, subjects } = view;
   const importance = (t) => PRIORITY_RANK[t.priority] * 3 + DIFFICULTY_RANK[t.difficulty];
   const overdue = tasks.filter((t) => t.status === "pending" && t.date < today).sort((a, b) => a.date.localeCompare(b.date));
   const todays = tasks.filter((t) => t.date === today)
     .sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || importance(a) - importance(b));
   const upcomingRecalls = tasks.filter((t) => t.status === "pending" && t.type === "recall" && t.date > today).slice(0, 6);
 
-  const minutesOf = (list, type) => list.filter((t) => t.type === type).reduce((n, t) => n + t.minutes, 0);
-  const plannedStudy = minutesOf(todays, "study") + minutesOf(overdue, "study");
-  const plannedRecall = minutesOf(todays, "recall") + minutesOf(overdue, "recall");
+  const subjectById = new Map(subjects.map((s) => [s.id, s]));
+  const todayStudy = todays.filter((t) => t.type === "study");
+  const todayRecalls = todays.filter((t) => t.type === "recall");
+  const studyBlocks = [...new Set(todayStudy.map((t) => t.subjectId))].map((id) => {
+    const list = todayStudy.filter((t) => t.subjectId === id);
+    return { id, subject: subjectById.get(id), list, pending: list.filter((t) => t.status === "pending").length };
+  }).sort((a, b) => (a.subject?.name ?? "").localeCompare(b.subject?.name ?? ""));
   const todayMinutes = sessions.filter((s) => toLocalDay(s.ended_at) === today).reduce((n, s) => n + (s.duration_minutes || 0), 0);
   const weekMinutes = sessions.reduce((n, s) => n + (s.duration_minutes || 0), 0);
   const firstName = (state.profile?.full_name || state.user?.user_metadata?.full_name || "").split(" ")[0];
@@ -131,11 +135,20 @@ async function draw(host) {
       }).join("")}</ul></section>` : ""}
 
     <section class="card"><h2>Today's plan</h2>
-      <p class="muted">Study: ${fmtMinutes(plannedStudy)} planned of ${fmtMinutes(capacityToday)} available.
-        Recall: ${fmtMinutes(plannedRecall)} planned of ${fmtMinutes(recallCapacityToday)} available.</p>
-      ${todays.length ? `<ul class="plain">${todays.map((t) => taskRow(t, { actions: t.status === "pending" })).join("")}</ul>`
-        : noTopics ? `<p>No subjects or topics yet. Start on the <a href="#/subjects">Subjects</a> page.</p>`
-        : `<p>Nothing is scheduled for today.</p>`}
+      ${studyBlocks.map((b) => `
+        <div class="subject-block" style="--subject:${escapeHtml(b.list[0].color || "#3b5bdb")}">
+          <div class="subject-block-head">
+            <div><h3><span class="subject-dot"></span>${escapeHtml(b.subject?.name ?? "")}</h3>
+              <p class="muted small">${fmtMinutes(b.subject?.dailyMinutes ?? 0)} today · ${plural(b.list.length, "topic")}${b.pending ? "" : " · done"}</p></div>
+            ${b.pending ? `<button type="button" class="btn btn-primary" data-subject-done="${escapeHtml(b.id)}">Mark ${escapeHtml(b.subject?.name ?? "subject")} done</button>` : ""}
+          </div>
+          <ul class="plain">${b.list.map((t) => taskRow(t, { actions: t.status === "pending" })).join("")}</ul>
+        </div>`).join("")}
+      ${todayRecalls.length ? `<div class="subject-block">
+          <div class="subject-block-head"><div><h3>Recalls today</h3><p class="muted small">${plural(todayRecalls.length, "recall")} · no time limit</p></div></div>
+          <ul class="plain">${todayRecalls.map((t) => taskRow(t, { actions: t.status === "pending" })).join("")}</ul>
+        </div>` : ""}
+      ${!todays.length ? (noTopics ? `<p>No subjects or topics yet. Start on the <a href="#/subjects">Subjects</a> page.</p>` : `<p>Nothing is scheduled for today.</p>`) : ""}
       ${doneToday ? `<p class="muted">Today's plan is finished.</p>` : ""}
     </section>
 
@@ -147,6 +160,13 @@ async function draw(host) {
     </section>`;
 
   el.addEventListener("click", (e) => {
+    const subjectBtn = e.target.closest("[data-subject-done]");
+    if (subjectBtn) {
+      el.querySelectorAll("[data-result], [data-subject-done]").forEach((b) => (b.disabled = true)); // no double clicks
+      const subjectId = subjectBtn.dataset.subjectDone;
+      withSaving(() => planner.completeSubjectStudy(subjectId), () => draw(host));
+      return;
+    }
     const btn = e.target.closest("[data-result]");
     if (!btn) return;
     const taskId = btn.closest("[data-task]").dataset.task;

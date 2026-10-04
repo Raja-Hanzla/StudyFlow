@@ -5,8 +5,9 @@ import { calculateNextRecall, generateSchedule, applyResult, diffSchedule, resch
 const today = "2026-10-05"; // a Monday
 const topic = (id, o = {}) => ({ id, chapterId: "c", subjectId: "s1", chapterNumber: 1, name: id, difficulty: "medium",
   priority: "normal", minutes: 30, studied: false, stage: 0, nextRecallDay: null, ...o });
-const snap = (topics, o = {}) => ({ today, subjects: [{ id: "s1", name: "Physics" }], exams: [], topics, tasks: [],
-  capacity: {}, defaultMinutes: 60, ...o });
+const subj = (o = {}) => ({ id: "s1", name: "Physics", dailyMinutes: 60, topicsPerDay: 1, ...o });
+const snap = (topics, o = {}) => ({ today, subjects: [subj()], exams: [], topics, tasks: [], ...o });
+const task = (o) => ({ id: "k" + Math.random(), subjectId: "s1", minutes: 30, ...o });
 const perDay = (planned) => planned.reduce((m, p) => ({ ...m, [p.date]: (m[p.date] ?? 0) + p.minutes }), {});
 
 // Spaced repetition
@@ -26,30 +27,65 @@ const clamped = calculateNextRecall({ result: "done", stage: 3, difficulty: "med
 assert.ok(clamped.nextDay <= addDays(today, 4));
 assert.equal(calculateNextRecall({ result: "done", stage: 3, difficulty: "medium", today, examDate: addDays(today, 1) }).nextDay, null);
 
-// Capacity: 10 topics x 30 min, 60 min per day -> never more than 60 per day
-const ten = Array.from({ length: 10 }, (_, i) => topic("t" + i));
-const plan = generateSchedule(snap(ten));
-assert.ok(Object.values(perDay(plan.planned)).every((m) => m <= 60));
-assert.equal(plan.planned.length, 10);
+const on = (res, type, day) => res.planned.filter((p) => p.type === type && p.date === day);
+const day = (n) => addDays(today, n);
 
-// Priority: a hard high-priority topic goes first when time is short
+// Subject time: 3 topics a day share 60 minutes (20 each), the rest follow on the next days
+const ten = Array.from({ length: 10 }, (_, i) => topic("t" + i));
+const three = generateSchedule(snap(ten, { subjects: [subj({ topicsPerDay: 3 })] }));
+assert.equal(on(three, "study", today).length, 3);
+assert.deepEqual(on(three, "study", today).map((p) => p.minutes), [20, 20, 20]);
+assert.equal(on(three, "study", day(3)).length, 1);          // 10 topics = 3 + 3 + 3 + 1
+assert.equal(three.planned.filter((p) => p.type === "study").length, 10);
+
+// Order inside a subject: high priority and hard topics first, then chapter order
 const mixed = [topic("easy", { difficulty: "easy", priority: "low" }), topic("hard", { difficulty: "hard", priority: "high" })];
-const tight = generateSchedule(snap(mixed, { defaultMinutes: 30 }));
-assert.equal(tight.planned.find((p) => p.date === today).topicId, "hard");
+assert.equal(on(generateSchedule(snap(mixed)), "study", today)[0].topicId, "hard");
+
+// One topic a day gets the whole subject time; two subjects both get their own time on the same day
+const two = generateSchedule(snap([topic("p1"), topic("c1", { subjectId: "s2" })],
+  { subjects: [subj(), subj({ id: "s2", name: "Chemistry", dailyMinutes: 45, topicsPerDay: 1 })] }));
+assert.equal(on(two, "study", today).length, 2);
+assert.equal(on(two, "study", today).find((p) => p.topicId === "p1").minutes, 60);
+assert.equal(on(two, "study", today).find((p) => p.topicId === "c1").minutes, 45);
+
+// Marking the subject done today uses its quota: next topics start tomorrow
+const doneToday = generateSchedule(snap([topic("a", { studied: true, nextRecallDay: day(1) }), topic("b"), topic("c")],
+  { tasks: [task({ topicId: "a", type: "study", date: today, status: "done" })] }));
+assert.equal(on(doneToday, "study", today).length, 0);
+assert.equal(on(doneToday, "study", day(1)).length, 1);
+assert.equal(on(doneToday, "study", day(1))[0].topicId, "b");
+// ...but with 2 topics a day, one more fits today (and shares the time with the finished one)
+const room = generateSchedule(snap([topic("a", { studied: true, nextRecallDay: day(1) }), topic("b")],
+  { subjects: [subj({ topicsPerDay: 2 })], tasks: [task({ topicId: "a", type: "study", date: today, status: "done" })] }));
+assert.deepEqual(on(room, "study", today).map((p) => [p.topicId, p.minutes]), [["b", 30]]);
+
+// Recalls: no time, no limit — all 40 due today are scheduled today
+const many = Array.from({ length: 40 }, (_, i) => topic("r" + i, { studied: true, stage: 1, nextRecallDay: today }));
+const lots = generateSchedule(snap(many));
+assert.equal(on(lots, "recall", today).length, 40);
+assert.ok(on(lots, "recall", today).every((p) => p.minutes === 0));
+// ...and they never use up the study time
+const withStudy = generateSchedule(snap([...many, topic("new")]));
+assert.equal(on(withStudy, "study", today).length, 1);
 
 // Deterministic
 assert.deepEqual(generateSchedule(snap(ten)), generateSchedule(snap(ten)));
 
-// No work on or after the exam; overdue recall comes first
+// No work on or after the exam; overdue recall is placed today
 const exam = snap([topic("a", { studied: true, nextRecallDay: addDays(today, -3), stage: 1 }), topic("b")],
-  { exams: [{ subjectId: "s1", date: addDays(today, 3) }], defaultMinutes: 30 });
+  { exams: [{ subjectId: "s1", date: addDays(today, 3) }] });
 const examPlan = generateSchedule(exam);
 assert.ok(examPlan.planned.every((p) => p.date < addDays(today, 3)));
-assert.equal(examPlan.planned.find((p) => p.date === today).topicId, "a");
+assert.equal(on(examPlan, "recall", today)[0].topicId, "a");
+// Not enough days before the exam at this pace -> a note
+const crunch = generateSchedule(snap(ten, { exams: [{ subjectId: "s1", date: day(4) }] }));
+assert.ok(crunch.notes.some((n) => n.kind === "workload" && n.text.includes("Physics")));
+assert.equal(crunch.planned.filter((p) => p.type === "study").length, 4);   // days 0..3, one topic each
 
-// Partial study today is not offered again today
-const retry = generateSchedule(snap([topic("x")], { tasks: [{ id: "k", topicId: "x", type: "study", date: today, minutes: 30, status: "partial" }] }));
-assert.equal(retry.planned[0].date, addDays(today, 1));
+// Partial study today is not offered again today (and counts as today's session)
+const retry = generateSchedule(snap([topic("x")], { tasks: [task({ topicId: "x", type: "study", date: today, status: "partial" })] }));
+assert.equal(retry.planned[0].date, day(1));
 
 // Study done -> first recall tomorrow; diff keeps unchanged rows
 const r = applyResult({ topic: topic("x"), type: "study", result: "done", today, examDate: null, nowIso: "2026-10-05T08:00:00Z" });
@@ -61,22 +97,3 @@ assert.deepEqual([d.insert.length, d.update.length, d.remove.length], [0, 0, 0])
 assert.equal(rescheduleMissedTasks([{ id: "o", status: "pending", date: addDays(today, -3) }, { id: "n", status: "pending", date: addDays(today, -1) }], today).length, 1);
 
 console.log("All scheduler checks passed.");
-
-// Recall has its own daily pool: 60 min of study + recalls on top, never mixed
-const studied = Array.from({ length: 6 }, (_, i) => topic("r" + i, { studied: true, stage: 1, nextRecallDay: today, minutes: 30 })); // recall = 10 min each
-const newOnes = Array.from({ length: 2 }, (_, i) => topic("n" + i)); // 30 min each = full 60 study
-const both = generateSchedule(snap([...studied, ...newOnes], { recallMinutes: 30 }));
-const dayOf = (type, d) => both.planned.filter((p) => p.type === type && p.date === d).reduce((n, p) => n + p.minutes, 0);
-assert.equal(dayOf("study", today), 60, "recalls must not take study minutes");
-assert.equal(dayOf("recall", today), 30, "recall pool is its own 30 minutes");
-assert.ok(both.planned.filter((p) => p.type === "recall").every((p, _, a) => a.length === 6), "all 6 recalls are still planned (spilling to later days)");
-assert.ok(Object.keys(perDay(both.planned.filter((p) => p.type === "recall"))).every((d) => perDay(both.planned.filter((p) => p.type === "recall"))[d] <= 30));
-// Recalls already done today use up the recall pool, not the study pool
-const afterRecall = generateSchedule(snap([...studied, ...newOnes], { recallMinutes: 30,
-  tasks: [{ id: "x", topicId: "gone", type: "recall", date: today, minutes: 30, status: "done" }] }));
-assert.equal(afterRecall.planned.filter((p) => p.type === "recall" && p.date === today).length, 0);
-assert.equal(afterRecall.planned.filter((p) => p.type === "study" && p.date === today).reduce((n, p) => n + p.minutes, 0), 60);
-// Recalls that can't fit before the window ends produce a note
-const flood = Array.from({ length: 80 }, (_, i) => topic("f" + i, { studied: true, stage: 1, nextRecallDay: today, minutes: 60 }));
-assert.ok(generateSchedule(snap(flood, { recallMinutes: 10 })).notes.some((n) => n.kind === "recall-workload"));
-console.log("Recall pool checks passed.");

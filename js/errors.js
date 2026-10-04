@@ -17,8 +17,8 @@ export function explainError(error) {
       "that your Supabase project isn't paused, and that no extension (ad blocker, VPN) is blocking it.";
   }
   const raw = String(error?.message || error || "");
-  if (raw.includes("daily_recall_minutes")) {
-    return "Your Supabase settings table has no daily_recall_minutes column yet. Run the one-line SQL from the README (section 1, step 4), then reload.";
+  if (raw.includes("daily_minutes") || raw.includes("topics_per_day")) {
+    return "Your Supabase subjects table is missing the daily_minutes / topics_per_day columns. Run the SQL from the README (section 1, step 4), then reload.";
   }
   const message = String(error?.message || error || "").trim();
   return message ? `The database said: ${message}` : "An unknown error happened.";

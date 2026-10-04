@@ -2,14 +2,13 @@
 import * as db from "./database.js";
 import * as auth from "./auth.js";
 import { state } from "./state.js";
-import { WEEKDAYS } from "./constants.js";
 import { withSaving, openForm, tracked, errorCard } from "./ui.js";
 import { refreshSchedule } from "./planner.js";
 import { setTheme, currentTheme } from "./theme.js";
 import { exportData, importBackupFile } from "./exportImport.js";
 import { $, escapeHtml, showToast } from "./utils.js";
 
-const cap = (w) => w[0].toUpperCase() + w.slice(1);
+
 
 // Keep the Appearance radios in step with the top-bar toggle.
 window.addEventListener("themechange", (e) => {
@@ -34,8 +33,6 @@ export async function renderSettings(container) {
 }
 
 function draw(el, container, profile, settings) {
-  const daily = settings.daily_study_minutes ?? profile.daily_study_minutes ?? 60;
-  const recall = settings.daily_recall_minutes ?? 30;
   const theme = currentTheme();
   const input = (id, label, attrs, value, setting, extra = "") => `
     <div class="field"><label for="${id}">${label}</label>
@@ -51,26 +48,8 @@ function draw(el, container, profile, settings) {
       </div>
     </section>
 
-    <section class="card"><h2>Study capacity</h2>
-      <p class="muted">How much time you can study. The schedule never plans more than this on a day.</p>
-      <div class="chips" role="group" aria-label="Quick choices">
-        ${[30, 60, 120, 180].map((m) => `<button type="button" class="btn" data-action="set-daily" data-minutes="${m}">${m < 60 ? m + " min" : m / 60 + " h"}</button>`).join("")}
-      </div>
-      ${input("set-daily", "Minutes per day (usual)", 'type="number" min="10" max="720" step="5"', daily, "daily")}
-      <h3 class="sub-head">Different amounts for each weekday</h3>
-      <p class="muted small">Leave a day empty to use the usual amount. Enter 0 for a rest day.</p>
-      <div class="weekday-grid">
-        ${WEEKDAYS.map((d) => `
-          <div class="field"><label for="set-${d}">${cap(d)}</label>
-            <input id="set-${d}" type="number" min="0" max="720" step="5" data-setting="weekday" data-day="${d}"
-                   data-last="${settings[`${d}_minutes`] ?? ""}" value="${settings[`${d}_minutes`] ?? ""}" placeholder="${daily}" /></div>`).join("")}
-      </div>
-      <button type="button" class="btn" data-action="all-days">Use the usual amount for every day</button>
-    </section>
-
-    <section class="card"><h2>Recall time</h2>
-      <p class="muted">Time for recalls (quick reviews of topics you already studied). It is separate from study time above, so recalls never use up your study minutes.</p>
-      ${input("set-recall", "Recall minutes per day", 'type="number" min="5" max="240" step="5"', recall, "recall")}
+    <section class="card"><h2>Study time</h2>
+      <p class="muted">Study time is set for each subject: minutes a day and new topics a day. Change it on the <a href="#/subjects">Subjects</a> page (Edit subject). Recalls have no time limit.</p>
     </section>
 
     <section class="card"><h2>Appearance</h2>
@@ -104,13 +83,12 @@ function draw(el, container, profile, settings) {
     </section>`;
 
   const status = (text) => { const p = $("#data-status", el); if (p) p.textContent = text; };
-  const afterCapacity = () => refreshSchedule().catch(() => showToast("Couldn't update your schedule. It will retry next time you open the app."));
 
   // ----- Fields save when changed -----
   el.addEventListener("change", (e) => {
     const field = e.target;
     if (field.name === "theme") return void setTheme(field.value);
-    const { setting, day } = field.dataset;
+    const { setting } = field.dataset;
     if (!setting) return;
     const revert = () => { field.value = field.dataset.last; };
     const remember = () => { field.dataset.last = field.value; };
@@ -124,26 +102,6 @@ function draw(el, container, profile, settings) {
         state.profile = { ...state.profile, [setting]: value };
         if (setting === "full_name") $("#account-name").textContent = value;
       });
-    } else if (setting === "daily") {
-      const n = Number(field.value);
-      if (!Number.isInteger(n) || n < 10 || n > 720) { showToast("Daily study time must be between 10 and 720 minutes."); return revert(); }
-      withSaving(async () => {
-        await db.updateSettings({ daily_study_minutes: n });
-        await db.updateProfileFields({ daily_study_minutes: n });
-      }, () => {
-        remember();
-        el.querySelectorAll('[data-setting="weekday"]').forEach((i) => (i.placeholder = String(n)));
-        afterCapacity();
-      });
-    } else if (setting === "recall") {
-      const n = Number(field.value);
-      if (!Number.isInteger(n) || n < 5 || n > 240) { showToast("Recall time must be between 5 and 240 minutes."); return revert(); }
-      withSaving(() => db.updateSettings({ daily_recall_minutes: n }), () => { remember(); afterCapacity(); });
-    } else if (setting === "weekday") {
-      const raw = field.value.trim();
-      const n = raw === "" ? null : Number(raw);
-      if (n !== null && (!Number.isInteger(n) || n < 0 || n > 720)) { showToast("Minutes for a day must be 0 to 720, or empty."); return revert(); }
-      withSaving(() => db.updateSettings({ [`${day}_minutes`]: n }), () => { remember(); afterCapacity(); });
     }
   });
 
@@ -152,19 +110,6 @@ function draw(el, container, profile, settings) {
     const action = e.target.closest("[data-action]")?.dataset.action;
     if (!action) return;
 
-    if (action === "set-daily") {
-      const box = $("#set-daily", el);
-      box.value = e.target.closest("[data-action]").dataset.minutes;
-      box.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-    if (action === "all-days") {
-      const n = Number($("#set-daily", el).dataset.last);
-      const fields = Object.fromEntries(WEEKDAYS.map((d) => [`${d}_minutes`, n]));
-      withSaving(() => db.updateSettings(fields), () => {
-        el.querySelectorAll('[data-setting="weekday"]').forEach((i) => { i.value = String(n); i.dataset.last = String(n); });
-        afterCapacity();
-      });
-    }
     if (action === "logout") {
       try { await auth.signOut(); } catch (err) { showToast(err.message); }
     }

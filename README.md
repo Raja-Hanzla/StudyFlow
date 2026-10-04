@@ -14,11 +14,12 @@ Plain HTML, CSS and JavaScript (ES modules). It talks directly to your Supabase 
    - add the same address followed by `/**` to **Redirect URLs**.
    Email confirmation and password-reset links return to this address. `localhost` and `127.0.0.1` count as different addresses.
 3. Under **Authentication, Providers, Email**, keep **Confirm email** on.
-4. Recall time has its own daily limit, separate from study time. Run this once in the Supabase **SQL Editor** (safe to run twice):
+4. Study time is set per subject. Run this once in the Supabase **SQL Editor** (safe to run twice):
    ```sql
-   alter table public.settings add column if not exists daily_recall_minutes integer not null default 30;
+   alter table public.subjects add column if not exists daily_minutes integer not null default 60;
+   alter table public.subjects add column if not exists topics_per_day integer not null default 1;
    ```
-   Until you do, the app plans 30 minutes of recall a day, and saving the Recall time setting shows a message pointing here.
+   Until you do, adding or editing a subject shows a message pointing here. (If you ran the earlier `daily_recall_minutes` line, it is no longer used and is harmless.)
 
 ## 2. Run it
 
@@ -61,12 +62,12 @@ node tests/backup.test.mjs
 
 ## 5. How scheduling works, in short
 
-Study and recall have **two separate daily time pools**. Study tasks use your study minutes; recalls use the recall minutes (Settings, Recall time). A recall never takes time from studying, and studying never takes time from recalls.
+Every subject has **minutes per day** and **new topics per day** (Subjects page, Add/Edit subject). Each day the subject gets that many unstudied topics, most important first (high priority, then hard, then chapter order), and they share the subject's minutes. **Mark subject done** on the dashboard studies all of that subject's topics for the day at once; the next topics follow on the next days. **Recalls have no time and no daily limit**: every recall that is due is scheduled on its day.
 
 - A topic never studied gets a **study** task. A studied topic gets a **recall** task on its `next_recall_at` day.
 - Recall gaps grow with `recall_stage`: 1, 3, 7, 14, then 30 days. Hard topics come back sooner, easy ones later, and gaps shrink as an exam gets close.
 - Nothing is scheduled after the day before an exam.
-- Each day holds at most your available minutes (set per weekday in Settings). When there is too little time, the most important work goes first: overdue, closer exam, high priority, hard, unfinished study, then ordinary recalls.
+- If a subject's topics won't all fit before its exam at the current pace, the dashboard says so and suggests raising "topics per day".
 - A task left pending for more than 2 days is counted as missed, so a backlog never builds up.
 
 ## 6. Good to know

@@ -49,9 +49,11 @@ export async function saveSettings({ dailyMinutes }) {
   if (error) throw fail(error);
 }
 
-export async function createSubject({ name, color }) {
+/** dailyMinutes = the subject's study time per day; topicsPerDay = how many topics share it. */
+export async function createSubject({ name, color, dailyMinutes, topicsPerDay }) {
   const { data, error } = await supabase
-    .from("subjects").insert({ user_id: uid(), name, color }).select("id").single();
+    .from("subjects").insert({ user_id: uid(), name, color, daily_minutes: dailyMinutes, topics_per_day: topicsPerDay })
+    .select("id").single();
   if (error) throw fail(error);
   return data;
 }
@@ -74,14 +76,14 @@ export async function createChapter({ subjectId, name, chapterNumber }) {
 }
 
 /** One request for many topics. topics: [{name, difficulty, priority}] */
-export async function createTopics(chapterId, topics, estimatedMinutes) {
+export async function createTopics(chapterId, topics) {
   if (!topics.length) return;
   // Rows inserted together would all get the same created_at, which would lose the
   // order the student pasted them in. We space the timestamps 1 ms apart to keep it.
   const base = Date.now();
   const rows = topics.map((t, i) => ({
     user_id: uid(), chapter_id: chapterId, name: t.name,
-    difficulty: t.difficulty, priority: t.priority, estimated_minutes: estimatedMinutes,
+    difficulty: t.difficulty, priority: t.priority,
     created_at: new Date(base + i).toISOString(),
     // status / recall_stage are left out on purpose: the database defaults apply.
   }));

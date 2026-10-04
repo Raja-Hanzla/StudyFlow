@@ -46,7 +46,7 @@ const oneOf = (list) => (v) => list.includes(v);
 
 // need = must be present and valid. may = may be missing/null, but if present must be valid.
 const SCHEMAS = {
-  subjects: { label: "Subject", need: { id: isId, name: isName }, may: { color: isColor, created_at: isTime } },
+  subjects: { label: "Subject", need: { id: isId, name: isName }, may: { color: isColor, daily_minutes: int(5, 720), topics_per_day: int(1, 20), created_at: isTime } },
   exams: { label: "Exam", need: { id: isId, subject_id: isId, name: isName, exam_date: isDay }, may: { created_at: isTime } },
   chapters: { label: "Chapter", need: { id: isId, subject_id: isId, name: isName }, may: { chapter_number: int(0, 100000), created_at: isTime } },
   topics: { label: "Topic",
@@ -134,7 +134,6 @@ export function validateBackup(json) {
       for (const day of WEEKDAYS) {
         if (settings[`${day}_minutes`] != null && !int(0, 720)(settings[`${day}_minutes`])) fail(`Settings: "${day}_minutes" must be 0 to 720.`);
       }
-      if (settings.daily_recall_minutes != null && !int(5, 240)(settings.daily_recall_minutes)) fail('Settings: "daily_recall_minutes" must be 5 to 240.');
       if (settings.dark_mode != null && typeof settings.dark_mode !== "boolean") fail('Settings: "dark_mode" must be true or false.');
     }
   }
@@ -170,7 +169,7 @@ export function prepareImport(backup, userId, newId = () => globalThis.crypto.ra
   const own = (id) => ({ id, user_id: userId });
 
   const plan = {
-    subjects: backup.subjects.map((r) => pick(r, ["name", "color", "created_at"], own(subjectIds.get(r.id)))),
+    subjects: backup.subjects.map((r) => pick(r, ["name", "color", "daily_minutes", "topics_per_day", "created_at"], own(subjectIds.get(r.id)))),
     exams: backup.exams.map((r) => pick(r, ["name", "exam_date", "created_at"], { ...own(newId()), subject_id: subjectIds.get(r.subject_id) })),
     chapters: backup.chapters.map((r) => pick(r, ["name", "chapter_number", "created_at"], { ...own(chapterIds.get(r.id)), subject_id: subjectIds.get(r.subject_id) })),
     topics: backup.topics.map((r) => pick(r, ["name", "difficulty", "priority", "status", "estimated_minutes", "last_studied_at",
@@ -190,7 +189,7 @@ export function prepareImport(backup, userId, newId = () => globalThis.crypto.ra
     plan.profile = p;
   }
   if (backup.settings) {
-    plan.settings = pick(backup.settings, ["daily_study_minutes", "daily_recall_minutes", "dark_mode", ...WEEKDAYS.map((d) => `${d}_minutes`)], {});
+    plan.settings = pick(backup.settings, ["daily_study_minutes", "dark_mode", ...WEEKDAYS.map((d) => `${d}_minutes`)], {});
   }
   return plan;
 }
